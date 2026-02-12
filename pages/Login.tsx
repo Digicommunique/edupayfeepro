@@ -56,8 +56,16 @@ const Login: React.FC = () => {
                  </div>
                )}
             </div>
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight leading-none mb-2">{state.settings.institutionName}</h1>
-            <p className="text-slate-400 font-bold text-[11px] uppercase tracking-[0.3em]">Secure Cloud Login</p>
+            
+            <div className="mb-6">
+              <h1 className="text-2xl font-black text-slate-900 tracking-tight leading-none mb-1">{state.settings.institutionName}</h1>
+              <div className="flex flex-col items-center gap-1 mt-4">
+                <span className="text-[14px] font-black text-emerald-600 tracking-wider">DCfeePay</span>
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Digital Communique Private Limited</span>
+              </div>
+            </div>
+            
+            <p className="text-slate-500 font-bold text-[10px] uppercase tracking-[0.3em] bg-slate-50 py-2.5 px-6 rounded-full inline-block border border-slate-100">Secure Cloud Login</p>
           </div>
 
           <form onSubmit={handleLogin} className="space-y-5">
@@ -72,6 +80,12 @@ const Login: React.FC = () => {
             </div>
             <button type="submit" className="w-full py-5 dc-gradient text-white rounded-[24px] font-black uppercase tracking-widest text-xs shadow-xl hover:scale-[1.02] transition-all">Sign In</button>
           </form>
+          
+          <div className="mt-10 text-center">
+             <p className="text-[8px] font-bold text-slate-300 uppercase tracking-widest">
+               Powered by DCfeePay Cloud Engine
+             </p>
+          </div>
         </div>
       </div>
     </div>
