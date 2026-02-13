@@ -1,5 +1,5 @@
 
-import React, { useContext, useState, useRef } from 'react';
+import React, { useContext, useState, useRef, useEffect } from 'react';
 import { AppContext } from '../App';
 import { Accountant, AppSettings } from '../types';
 import { supabase } from '../lib/supabase';
@@ -8,10 +8,29 @@ const SettingsPage: React.FC = () => {
   const { state, refreshData } = useContext(AppContext)!;
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isProfileSaving, setIsProfileSaving] = useState(false);
   const [editingStaffId, setEditingStaffId] = useState<string | null>(null);
   const [newAccountant, setNewAccountant] = useState<Partial<Accountant>>({ name: '', userId: '', password: '' });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeTab, setActiveTab] = useState<'profile' | 'academic' | 'staff'>('profile');
+
+  // Local state for profile fields to ensure no typing lag
+  const [localProfile, setLocalProfile] = useState({
+    institutionName: '',
+    address: '',
+    contactNumber: ''
+  });
+
+  // Sync local profile state when global state loads
+  useEffect(() => {
+    if (state.settings) {
+      setLocalProfile({
+        institutionName: state.settings.institutionName || '',
+        address: state.settings.address || '',
+        contactNumber: state.settings.contactNumber || ''
+      });
+    }
+  }, [state.settings]);
 
   const updateSettings = async (field: keyof AppSettings, value: any) => {
     try {
@@ -22,11 +41,38 @@ const SettingsPage: React.FC = () => {
                       field === 'availableSemesters' ? 'available_semesters' :
                       field === 'availableSessions' ? 'available_sessions' : field;
       
-      const settingsId = (state.settings as any).id || (state.settings as any).id;
+      const settingsId = (state.settings as any).id;
+      if (!settingsId) throw new Error("Settings record ID missing");
+
       await supabase.from('settings').update({ [dbField]: value }).match({ id: settingsId });
       await refreshData();
     } catch (err) {
       console.error('Error updating settings:', err);
+      alert("Failed to sync change to cloud.");
+    }
+  };
+
+  const saveProfileChanges = async () => {
+    setIsProfileSaving(true);
+    try {
+      const settingsId = (state.settings as any).id;
+      if (!settingsId) throw new Error("Settings record ID missing");
+
+      const { error } = await supabase.from('settings').update({
+        institution_name: localProfile.institutionName,
+        address: localProfile.address,
+        contact_number: localProfile.contactNumber
+      }).match({ id: settingsId });
+
+      if (error) throw error;
+      
+      await refreshData();
+      alert("Profile updated successfully!");
+    } catch (err) {
+      console.error('Error saving profile:', err);
+      alert("Failed to save profile changes.");
+    } finally {
+      setIsProfileSaving(false);
     }
   };
 
@@ -64,7 +110,6 @@ const SettingsPage: React.FC = () => {
 
   const saveAccountant = async () => {
     const targetUserId = newAccountant.userId || newAccountant.user_id;
-    
     if (newAccountant.name && targetUserId && newAccountant.password) {
       setIsSaving(true);
       try {
@@ -74,14 +119,11 @@ const SettingsPage: React.FC = () => {
             password: newAccountant.password.trim()
         };
 
-        let response;
         if (editingStaffId) {
-            response = await supabase.from('accountants').update(payload).match({ id: editingStaffId });
+            await supabase.from('accountants').update(payload).match({ id: editingStaffId });
         } else {
-            response = await supabase.from('accountants').insert(payload);
+            await supabase.from('accountants').insert(payload);
         }
-
-        if (response.error) throw response.error;
 
         await refreshData();
         setIsModalOpen(false);
@@ -92,16 +134,13 @@ const SettingsPage: React.FC = () => {
       } finally {
         setIsSaving(false);
       }
-    } else {
-        alert("Please fill all staff fields (Name, Login ID, and Password).");
     }
   };
 
   const deleteAccountant = async (id: string) => {
-    if (window.confirm("CRITICAL: This will immediately revoke all system access for this staff member. Proceed?")) {
+    if (window.confirm("CRITICAL: Revoke all access for this staff member?")) {
       try {
-        const { error } = await supabase.from('accountants').delete().match({ id });
-        if (error) throw error;
+        await supabase.from('accountants').delete().match({ id });
         await refreshData();
       } catch (err) {
         console.error('Error revoking staff:', err);
@@ -109,29 +148,41 @@ const SettingsPage: React.FC = () => {
     }
   };
 
-  if (state.user?.role !== 'Admin') return <div className="p-20 text-center font-black text-rose-500">ACCESS DENIED</div>;
+  if (state.user?.role !== 'Admin') return <div className="p-20 text-center font-black text-rose-500 uppercase tracking-widest">Access Denied</div>;
 
   return (
-    <div className="space-y-10 animate-fade-in max-w-6xl mx-auto">
-      <div className="flex justify-between items-end">
+    <div className="space-y-10 animate-fade-in max-w-6xl mx-auto pb-20">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
         <div>
           <h2 className="text-4xl font-black text-slate-900 tracking-tight">System Control</h2>
           <p className="text-slate-500 font-medium">Manage institution profile, staff, and masters</p>
         </div>
         <div className="flex gap-2 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 shadow-sm">
           <button onClick={() => setActiveTab('profile')} className={`px-6 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeTab === 'profile' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500'}`}>Profile</button>
-          <button onClick={() => setActiveTab('academic')} className={`px-6 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeTab === 'academic' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500'}`}>Academic Masters</button>
-          <button onClick={() => setActiveTab('staff')} className={`px-6 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeTab === 'staff' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500'}`}>Staff Panel</button>
+          <button onClick={() => setActiveTab('academic')} className={`px-6 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeTab === 'academic' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500'}`}>Masters</button>
+          <button onClick={() => setActiveTab('staff')} className={`px-6 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeTab === 'staff' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500'}`}>Staff</button>
         </div>
       </div>
 
       {activeTab === 'profile' && (
-        <div className="bg-white p-10 rounded-[40px] border border-slate-200 shadow-sm space-y-10">
-          <h3 className="text-2xl font-black text-slate-900 flex items-center gap-4">
-             <span className="w-2.5 h-10 bg-emerald-500 rounded-full"></span> Institution Identity
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-            <div className="space-y-6">
+        <div className="bg-white p-6 md:p-12 rounded-[40px] border border-slate-200 shadow-sm space-y-12">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+            <h3 className="text-2xl font-black text-slate-900 flex items-center gap-4">
+              <span className="w-2.5 h-10 bg-emerald-500 rounded-full"></span> Institution Identity
+            </h3>
+            <button 
+              onClick={saveProfileChanges}
+              disabled={isProfileSaving}
+              className={`px-8 py-4 ${isProfileSaving ? 'bg-slate-200 text-slate-400' : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-xl shadow-emerald-500/20'} rounded-2xl font-black uppercase text-[10px] tracking-widest transition-all flex items-center gap-3 active:scale-95`}
+            >
+              {isProfileSaving ? (
+                <div className="w-3 h-3 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div>
+              ) : '💾'} Save Profile Changes
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
+            <div className="space-y-8">
               <div className="space-y-4">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Official Logo</label>
                 <div className="flex items-center gap-8">
@@ -153,17 +204,34 @@ const SettingsPage: React.FC = () => {
               </div>
               <div className="space-y-2 pt-4">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Institution Name</label>
-                <input type="text" value={state.settings.institutionName} onChange={(e) => updateSettings('institutionName', e.target.value)} className="w-full px-6 py-4.5 bg-slate-50 rounded-[22px] border-2 border-slate-200 focus:border-emerald-500 focus:bg-white outline-none font-bold text-slate-800 transition-all shadow-sm" />
+                <input 
+                  type="text" 
+                  value={localProfile.institutionName} 
+                  onChange={(e) => setLocalProfile({...localProfile, institutionName: e.target.value})} 
+                  className="w-full px-6 py-4.5 bg-slate-50 rounded-[22px] border-2 border-slate-200 focus:border-emerald-500 focus:bg-white outline-none font-bold text-slate-800 transition-all shadow-sm"
+                  placeholder="Official Name"
+                />
               </div>
             </div>
-            <div className="space-y-6">
+            <div className="space-y-8">
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Full Registered Address</label>
-                <textarea value={state.settings.address} onChange={(e) => updateSettings('address', e.target.value)} className="w-full px-6 py-4.5 bg-slate-50 rounded-[22px] border-2 border-slate-200 focus:border-emerald-500 focus:bg-white outline-none font-bold text-slate-800 h-40 transition-all resize-none shadow-inner" />
+                <textarea 
+                  value={localProfile.address} 
+                  onChange={(e) => setLocalProfile({...localProfile, address: e.target.value})} 
+                  className="w-full px-6 py-4.5 bg-slate-50 rounded-[22px] border-2 border-slate-200 focus:border-emerald-500 focus:bg-white outline-none font-bold text-slate-800 h-40 transition-all resize-none shadow-inner"
+                  placeholder="Postal Address"
+                />
               </div>
               <div className="space-y-2">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Primary Contact Number</label>
-                <input type="text" value={state.settings.contactNumber} onChange={(e) => updateSettings('contactNumber', e.target.value)} className="w-full px-6 py-4.5 bg-slate-50 rounded-[22px] border-2 border-slate-200 focus:border-emerald-500 focus:bg-white outline-none font-bold text-slate-800 transition-all shadow-sm" />
+                <input 
+                  type="text" 
+                  value={localProfile.contactNumber} 
+                  onChange={(e) => setLocalProfile({...localProfile, contactNumber: e.target.value})} 
+                  className="w-full px-6 py-4.5 bg-slate-50 rounded-[22px] border-2 border-slate-200 focus:border-emerald-500 focus:bg-white outline-none font-bold text-slate-800 transition-all shadow-sm"
+                  placeholder="+91 XXXXX XXXXX"
+                />
               </div>
             </div>
           </div>
@@ -171,62 +239,41 @@ const SettingsPage: React.FC = () => {
       )}
 
       {activeTab === 'academic' && (
-        <div className="space-y-8">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            <AcademicManager title="Branches" items={state.settings.availableBranches} onAdd={(v) => updateSettings('availableBranches', [...state.settings.availableBranches, v])} onRemove={(v) => updateSettings('availableBranches', state.settings.availableBranches.filter(i => i !== v))} icon="🏢" />
-            <AcademicManager title="Semesters" items={state.settings.availableSemesters} onAdd={(v) => updateSettings('availableSemesters', [...state.settings.availableSemesters, v])} onRemove={(v) => updateSettings('availableSemesters', state.settings.availableSemesters.filter(i => i !== v))} icon="🗓️" />
-            <AcademicManager title="Sessions" items={state.settings.availableSessions} onAdd={(v) => updateSettings('availableSessions', [...state.settings.availableSessions, v])} onRemove={(v) => updateSettings('availableSessions', state.settings.availableSessions.filter(i => i !== v))} icon="⏳" />
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <AcademicManager title="Branches" items={state.settings.availableBranches} onAdd={(v) => updateSettings('availableBranches', [...state.settings.availableBranches, v])} onRemove={(v) => updateSettings('availableBranches', state.settings.availableBranches.filter(i => i !== v))} icon="🏢" />
+          <AcademicManager title="Semesters" items={state.settings.availableSemesters} onAdd={(v) => updateSettings('availableSemesters', [...state.settings.availableSemesters, v])} onRemove={(v) => updateSettings('availableSemesters', state.settings.availableSemesters.filter(i => i !== v))} icon="🗓️" />
+          <AcademicManager title="Sessions" items={state.settings.availableSessions} onAdd={(v) => updateSettings('availableSessions', [...state.settings.availableSessions, v])} onRemove={(v) => updateSettings('availableSessions', state.settings.availableSessions.filter(i => i !== v))} icon="⏳" />
         </div>
       )}
 
       {activeTab === 'staff' && (
-        <div className="bg-white p-10 rounded-[40px] border border-slate-200 shadow-sm space-y-10">
+        <div className="bg-white p-6 md:p-12 rounded-[40px] border border-slate-200 shadow-sm space-y-10">
           <div className="flex justify-between items-center">
              <h3 className="text-2xl font-black text-slate-900 flex items-center gap-4">
-               <span className="w-2.5 h-10 bg-emerald-500 rounded-full"></span> Staff Authorization
+               <span className="w-2.5 h-10 bg-emerald-500 rounded-full"></span> Staff Control
              </h3>
              <button onClick={openAddModal} className="px-8 py-4 bg-emerald-600 text-white text-[10px] font-black uppercase tracking-widest rounded-2xl shadow-xl hover:scale-[1.02] active:scale-95 transition-all">Grant Staff Access</button>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {state.accountants.map(acc => (
               <div key={acc.id} className="flex justify-between items-center p-8 bg-slate-50 rounded-[32px] border-2 border-slate-100 group hover:border-emerald-500/30 transition-all shadow-sm">
                 <div className="flex items-center gap-5">
                   <div className="w-16 h-16 bg-white rounded-3xl flex items-center justify-center text-emerald-600 font-bold shadow-md border border-slate-200 text-xl">
                     {acc.name.charAt(0)}
                   </div>
-                  <div className="space-y-1">
+                  <div>
                     <p className="text-lg font-black text-slate-900 leading-tight">{acc.name}</p>
                     <div className="flex flex-wrap gap-2 pt-1">
                       <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest bg-white border px-2 py-1 rounded-lg">ID: {acc.user_id || acc.userId}</span>
-                      <span className="text-[9px] font-black text-emerald-600 uppercase tracking-widest bg-emerald-100/50 border border-emerald-200 px-2 py-1 rounded-lg">PWD: <span className="font-mono text-[11px] ml-1">{acc.password}</span></span>
                     </div>
                   </div>
                 </div>
                 <div className="flex gap-2">
-                    <button 
-                        onClick={() => openEditModal(acc)} 
-                        className="w-10 h-10 flex items-center justify-center text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all border border-transparent hover:border-emerald-100"
-                        title="Edit Staff Member"
-                    >
-                        ✏️
-                    </button>
-                    <button 
-                        onClick={() => deleteAccountant(acc.id)} 
-                        className="w-10 h-10 flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all border border-transparent hover:border-rose-100"
-                        title="Revoke Access"
-                    >
-                        🗑️
-                    </button>
+                    <button onClick={() => openEditModal(acc)} className="w-10 h-10 flex items-center justify-center text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all border border-transparent hover:border-emerald-100">✏️</button>
+                    <button onClick={() => deleteAccountant(acc.id)} className="w-10 h-10 flex items-center justify-center text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all border border-transparent hover:border-rose-100">🗑️</button>
                 </div>
               </div>
             ))}
-            {state.accountants.length === 0 && (
-              <div className="md:col-span-2 text-center py-20 bg-slate-50/50 rounded-[32px] border-2 border-dashed border-slate-200">
-                  <p className="text-4xl opacity-20 mb-4">👥</p>
-                  <p className="text-xs font-black text-slate-400 uppercase tracking-widest">No Active Staff Records</p>
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -235,7 +282,7 @@ const SettingsPage: React.FC = () => {
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-[48px] w-full max-w-md overflow-hidden shadow-2xl animate-fade-in border-2 border-white">
              <div className="p-10 border-b border-slate-100 flex justify-between items-center bg-emerald-50/40">
-              <h3 className="text-2xl font-black text-slate-900 tracking-tight">{editingStaffId ? 'Update Credentials' : 'Access Token'}</h3>
+              <h3 className="text-2xl font-black text-slate-900 tracking-tight">{editingStaffId ? 'Update Credentials' : 'New Staff Access'}</h3>
               <button onClick={() => setIsModalOpen(false)} className="w-10 h-10 rounded-full flex items-center justify-center bg-white border text-slate-500 hover:text-rose-600 transition-all font-bold">✕</button>
             </div>
             <div className="p-10 space-y-6">
@@ -249,21 +296,14 @@ const SettingsPage: React.FC = () => {
                </div>
                <div className="space-y-1.5">
                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Staff Access Password</label>
-                 <input type="text" placeholder="Minimum 4 digits" value={newAccountant.password} onChange={(e) => setNewAccountant({...newAccountant, password: e.target.value})} className="w-full p-5 bg-slate-50 rounded-2xl border-2 border-slate-200 outline-none font-bold text-sm focus:border-emerald-500 focus:bg-white transition-all" />
+                 <input type="text" placeholder="Pin code" value={newAccountant.password} onChange={(e) => setNewAccountant({...newAccountant, password: e.target.value})} className="w-full p-5 bg-slate-50 rounded-2xl border-2 border-slate-200 outline-none font-bold text-sm focus:border-emerald-500 focus:bg-white transition-all" />
                </div>
                <button 
                 onClick={saveAccountant} 
                 disabled={isSaving}
                 className={`w-full py-5 ${isSaving ? 'bg-slate-400' : 'bg-emerald-600'} text-white rounded-[24px] font-black uppercase text-xs tracking-[0.2em] shadow-2xl hover:bg-emerald-700 active:scale-95 transition-all mt-4 flex items-center justify-center gap-3`}
                >
-                 {isSaving ? (
-                     <>
-                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                        Syncing...
-                     </>
-                 ) : (
-                    editingStaffId ? 'Update Authorized User' : 'Commit Credentials'
-                 )}
+                 {isSaving ? 'Syncing...' : 'Commit Credentials'}
                </button>
             </div>
           </div>

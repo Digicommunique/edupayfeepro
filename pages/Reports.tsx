@@ -6,6 +6,8 @@ const Reports: React.FC = () => {
   const { state } = useContext(AppContext)!;
   const [reportType, setReportType] = useState<'collection' | 'ledger'>('collection');
   const [matchingQuery, setMatchingQuery] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
 
   const formatCurrency = (val: number) => `₹${Number(val).toLocaleString('en-IN')}`;
   
@@ -13,15 +15,28 @@ const Reports: React.FC = () => {
     return state.students.map(student => {
       const studentCourseId = student.course_id || (student as any).courseId;
       const course = state.courses.find(c => c.id === studentCourseId);
+      
+      // Filter payments by date if selected
       const totalPaid = state.payments
-        .filter(p => p.student_id === student.id || (p as any).studentId === student.id)
+        .filter(p => {
+          const isStudent = p.student_id === student.id || (p as any).studentId === student.id;
+          if (!isStudent) return false;
+          
+          if (startDate && p.date < startDate) return false;
+          if (endDate && p.date > endDate) return false;
+          
+          return true;
+        })
         .reduce((sum, p) => sum + Number(p.amount), 0);
-      const balance = (course?.total_amount || course?.totalAmount || 0) - totalPaid;
+        
+      const courseTotal = (course?.total_amount || course?.totalAmount || 0);
+      const balance = courseTotal - totalPaid;
       const name = course?.course_name || (course as any)?.courseName || 'N/A';
+      
       return { 
         ...student, 
         courseName: name, 
-        totalReceivable: course?.total_amount || course?.totalAmount || 0, 
+        totalReceivable: courseTotal, 
         totalPaid, 
         balance 
       };
@@ -30,10 +45,15 @@ const Reports: React.FC = () => {
       const q = matchingQuery.toLowerCase();
       return f.name.toLowerCase().includes(q) || f.courseName.toLowerCase().includes(q) || (f.roll_number || (f as any).rollNumber || '').toLowerCase().includes(q);
     });
-  }, [state.students, state.payments, state.courses, matchingQuery]);
+  }, [state.students, state.payments, state.courses, matchingQuery, startDate, endDate]);
 
   const filteredPayments = useMemo(() => {
     return state.payments.filter(p => {
+      // Date filtering
+      if (startDate && p.date < startDate) return false;
+      if (endDate && p.date > endDate) return false;
+
+      // Text query filtering
       if (!matchingQuery) return true;
       const q = matchingQuery.toLowerCase();
       const student = state.students.find(s => s.id === (p.student_id || (p as any).studentId));
@@ -45,7 +65,7 @@ const Reports: React.FC = () => {
         (p.receipt_number || (p as any).receiptNumber || '').toLowerCase().includes(q)
       );
     });
-  }, [state.payments, state.students, matchingQuery]);
+  }, [state.payments, state.students, matchingQuery, startDate, endDate]);
 
   const exportToExcel = () => {
     let headers: string[] = [];
@@ -104,6 +124,12 @@ const Reports: React.FC = () => {
     window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
+  const clearFilters = () => {
+    setMatchingQuery('');
+    setStartDate('');
+    setEndDate('');
+  };
+
   return (
     <div className="space-y-8 no-print pb-20">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
@@ -113,13 +139,13 @@ const Reports: React.FC = () => {
         </div>
         <div className="flex flex-wrap gap-2 bg-white p-1.5 rounded-2xl border border-slate-200 shadow-sm">
           <button 
-            onClick={() => { setReportType('collection'); setMatchingQuery(''); }} 
+            onClick={() => { setReportType('collection'); clearFilters(); }} 
             className={`px-6 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${reportType === 'collection' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-50'}`}
           >
             Collections
           </button>
           <button 
-            onClick={() => { setReportType('ledger'); setMatchingQuery(''); }} 
+            onClick={() => { setReportType('ledger'); clearFilters(); }} 
             className={`px-6 py-2.5 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${reportType === 'ledger' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-500 hover:bg-slate-50'}`}
           >
             Ledger / Dues
@@ -127,45 +153,82 @@ const Reports: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex flex-col lg:flex-row gap-6 items-stretch">
-        <div className="flex-1 bg-white p-6 rounded-[32px] border border-slate-200 shadow-sm flex flex-col md:flex-row gap-6 items-center">
-          <div className="flex-1 w-full">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 mb-2 block">
-              {reportType === 'collection' ? 'Reconcile Transactions (UTR / UPI / Student / Receipt)' : 'Filter Student Records (Name / Roll / Course)'}
+      <div className="bg-white p-8 rounded-[40px] border border-slate-200 shadow-sm space-y-8">
+        <div className="flex flex-col xl:flex-row gap-8 items-end">
+          {/* Main Search */}
+          <div className="flex-1 w-full space-y-2">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 block">
+              {reportType === 'collection' ? 'Search UTR / Student / Receipt' : 'Search Student / Roll No'}
             </label>
-            <div className="relative">
+            <div className="relative group">
               <input 
                 type="text" 
                 value={matchingQuery} 
                 onChange={(e) => setMatchingQuery(e.target.value)}
-                placeholder={reportType === 'collection' ? "Search for matching bank entries..." : "Search for specific student dues..."}
-                className="w-full pl-12 pr-6 py-4 bg-slate-50 rounded-2xl border border-slate-200 outline-none font-bold text-slate-900 focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 focus:bg-white shadow-sm transition-all"
+                placeholder={reportType === 'collection' ? "Enter bank reference or student name..." : "Enter name or roll number..."}
+                className="w-full pl-12 pr-6 py-4.5 bg-slate-50 rounded-2xl border border-slate-200 outline-none font-bold text-slate-900 focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 focus:bg-white shadow-inner transition-all"
               />
-              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl filter grayscale group-hover:grayscale-0 transition-all">🔍</span>
+              <span className="absolute left-4 top-1/2 -translate-y-1/2 text-xl filter grayscale opacity-50">🔍</span>
             </div>
           </div>
-          <div className="bg-emerald-50 px-8 py-4 rounded-2xl border border-emerald-100 text-center min-w-[160px] flex flex-col justify-center">
-            <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest mb-1">Results Found</p>
-            <p className="text-3xl font-black text-emerald-700 tracking-tighter">
-              {reportType === 'collection' ? filteredPayments.length : studentFinancials.length}
-            </p>
+
+          {/* Date Filters */}
+          <div className="flex flex-col sm:flex-row gap-4 w-full xl:w-auto">
+            <div className="flex-1 sm:w-44 space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 block">From Date</label>
+              <input 
+                type="date" 
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-sm outline-none focus:border-emerald-500 transition-all shadow-inner"
+              />
+            </div>
+            <div className="flex-1 sm:w-44 space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1 block">To Date</label>
+              <input 
+                type="date" 
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-sm outline-none focus:border-emerald-500 transition-all shadow-inner"
+              />
+            </div>
+          </div>
+
+          {/* Result Count and Actions */}
+          <div className="flex gap-4 w-full xl:w-auto">
+            <div className="bg-emerald-50 px-6 py-4 rounded-2xl border border-emerald-100 flex flex-col justify-center min-w-[120px] text-center">
+              <p className="text-[9px] font-black text-emerald-600 uppercase tracking-widest mb-1">Results</p>
+              <p className="text-2xl font-black text-emerald-700 tracking-tighter">
+                {reportType === 'collection' ? filteredPayments.length : studentFinancials.length}
+              </p>
+            </div>
+            <div className="flex flex-col gap-2">
+              <button 
+                onClick={exportToExcel}
+                className="flex items-center gap-3 px-6 py-3 bg-white text-slate-700 border border-slate-200 rounded-xl font-black uppercase text-[9px] tracking-widest hover:bg-slate-50 active:scale-95 transition-all shadow-sm"
+              >
+                📊 Excel
+              </button>
+              <button 
+                onClick={triggerPrint}
+                className="flex items-center gap-3 px-6 py-3 bg-white text-slate-700 border border-slate-200 rounded-xl font-black uppercase text-[9px] tracking-widest hover:bg-slate-50 active:scale-95 transition-all shadow-sm"
+              >
+                🖨️ PDF
+              </button>
+            </div>
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-[32px] border border-slate-200 shadow-sm flex flex-row lg:flex-col justify-center gap-3">
+        {(matchingQuery || startDate || endDate) && (
+          <div className="pt-4 border-t border-slate-100 flex justify-end">
             <button 
-              onClick={exportToExcel}
-              className="px-6 py-3 bg-white text-slate-700 border border-slate-200 rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center gap-3 hover:bg-slate-50 active:scale-95 transition-all shadow-sm"
+              onClick={clearFilters}
+              className="text-[10px] font-black text-rose-500 uppercase tracking-widest hover:underline"
             >
-               📊 Excel Export
+              Reset Filters
             </button>
-            <button 
-              onClick={triggerPrint}
-              className="px-6 py-3 bg-white text-slate-700 border border-slate-200 rounded-2xl font-black uppercase text-[10px] tracking-widest flex items-center gap-3 hover:bg-slate-50 active:scale-95 transition-all shadow-sm"
-            >
-               🖨️ PDF Report
-            </button>
-        </div>
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-[40px] border border-slate-200 shadow-sm overflow-hidden">
@@ -211,9 +274,9 @@ const Reports: React.FC = () => {
                 <tr>
                   <th className="px-8 py-5 text-[10px] font-black uppercase text-slate-400 tracking-widest">Student Information</th>
                   <th className="px-8 py-5 text-[10px] font-black uppercase text-slate-400 tracking-widest text-right">Target Fee</th>
-                  <th className="px-8 py-5 text-[10px] font-black uppercase text-slate-400 tracking-widest text-right">Total Paid</th>
+                  <th className="px-8 py-5 text-[10px] font-black uppercase text-slate-400 tracking-widest text-right">Paid in Period</th>
                   <th className="px-8 py-5 text-[10px] font-black uppercase text-slate-400 tracking-widest text-right">Balance Due</th>
-                  <th className="px-8 py-5 text-[10px] font-black uppercase text-slate-400 tracking-widest text-right">Notifications</th>
+                  <th className="px-8 py-5 text-[10px] font-black uppercase text-slate-400 tracking-widest text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -234,10 +297,10 @@ const Reports: React.FC = () => {
                           onClick={() => sendDueReminder(f)} 
                           className="px-5 py-2.5 bg-rose-50 text-rose-600 text-[10px] font-black rounded-xl hover:bg-rose-100 transition-all uppercase tracking-widest border border-rose-100 active:scale-95 shadow-sm"
                         >
-                          Send Alert 📱
+                          Remind 📱
                         </button>
                       ) : (
-                        <span className="text-[10px] font-black text-emerald-500 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100 uppercase tracking-widest">Fully Paid</span>
+                        <span className="text-[10px] font-black text-emerald-500 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100 uppercase tracking-widest">Cleared</span>
                       )}
                     </td>
                   </tr>
@@ -248,7 +311,7 @@ const Reports: React.FC = () => {
           {(reportType === 'collection' ? filteredPayments.length : studentFinancials.length) === 0 && (
              <div className="text-center py-28 bg-slate-50/20">
               <div className="w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-6 grayscale opacity-20">🔍</div>
-              <p className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em]">No financial matches found in the active scope</p>
+              <p className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em]">No matches found for the selected period</p>
             </div>
           )}
         </div>
@@ -260,12 +323,15 @@ const Reports: React.FC = () => {
             <h1 className="text-5xl font-black uppercase tracking-tighter mb-2">{state.settings.institutionName}</h1>
             <p className="text-2xl font-bold text-slate-600 mb-2 uppercase tracking-widest">Official Financial Audit Report</p>
             <p className="text-lg text-slate-500">{state.settings.address}</p>
+            {startDate && endDate && (
+              <p className="text-base font-black uppercase text-emerald-600 mt-4 tracking-widest">Period: {startDate} to {endDate}</p>
+            )}
          </div>
 
          <div className="flex justify-between items-end mb-10 bg-slate-900 text-white p-8 rounded-3xl">
             <div>
                <p className="text-xs font-black uppercase tracking-[0.3em] opacity-60 mb-2">Scope of Report</p>
-               <h3 className="text-3xl font-black uppercase">{reportType === 'collection' ? 'Collection History' : 'Student Ledger & Dues'}</h3>
+               <h3 className="text-3xl font-black uppercase">{reportType === 'collection' ? 'Collection Ledger' : 'Student Dues Ledger'}</h3>
             </div>
             <div className="text-right">
                <p className="text-xs font-black uppercase tracking-widest opacity-60">Generated On</p>
@@ -280,7 +346,6 @@ const Reports: React.FC = () => {
                   <tr>
                     <th className="p-4 text-xs font-black uppercase tracking-widest">Receipt</th>
                     <th className="p-4 text-xs font-black uppercase tracking-widest">Payer Name</th>
-                    <th className="p-4 text-xs font-black uppercase tracking-widest">Reference</th>
                     <th className="p-4 text-xs font-black uppercase tracking-widest text-right">Amt (₹)</th>
                   </tr>
                 </thead>
@@ -291,7 +356,6 @@ const Reports: React.FC = () => {
                       <tr key={p.id}>
                         <td className="p-4 font-mono text-sm">{p.receipt_number || (p as any).receiptNumber}<br/><span className="text-[10px] text-slate-400">{p.date}</span></td>
                         <td className="p-4 font-bold">{student?.name}</td>
-                        <td className="p-4 text-xs font-mono">{p.transaction_id || (p as any).transactionId || '---'}</td>
                         <td className="p-4 text-right font-black">{p.amount.toLocaleString('en-IN')}</td>
                       </tr>
                      );
@@ -299,7 +363,7 @@ const Reports: React.FC = () => {
                 </tbody>
                 <tfoot className="bg-slate-900 text-white font-black">
                    <tr>
-                     <td colSpan={3} className="p-6 text-xl uppercase text-right">Net Collection Total</td>
+                     <td colSpan={2} className="p-6 text-xl uppercase text-right">Net Collection Total</td>
                      <td className="p-6 text-xl text-right">₹{filteredPayments.reduce((s, p) => s + Number(p.amount), 0).toLocaleString('en-IN')}</td>
                    </tr>
                 </tfoot>
@@ -309,8 +373,7 @@ const Reports: React.FC = () => {
                 <thead className="bg-slate-100 border-b-2 border-slate-900">
                   <tr>
                     <th className="p-4 text-xs font-black uppercase tracking-widest">Student</th>
-                    <th className="p-4 text-xs font-black uppercase tracking-widest">Roll No</th>
-                    <th className="p-4 text-xs font-black uppercase tracking-widest text-right">Fee</th>
+                    <th className="p-4 text-xs font-black uppercase tracking-widest text-right">Target</th>
                     <th className="p-4 text-xs font-black uppercase tracking-widest text-right">Paid</th>
                     <th className="p-4 text-xs font-black uppercase tracking-widest text-right">Due</th>
                   </tr>
@@ -319,7 +382,6 @@ const Reports: React.FC = () => {
                    {studentFinancials.map(f => (
                     <tr key={f.id}>
                       <td className="p-4"><p className="font-bold">{f.name}</p><p className="text-[9px] uppercase font-black text-slate-400">{f.courseName}</p></td>
-                      <td className="p-4 font-mono">{f.roll_number || (f as any).rollNumber || '---'}</td>
                       <td className="p-4 text-right">{f.totalReceivable.toLocaleString('en-IN')}</td>
                       <td className="p-4 text-right font-bold text-emerald-600">{f.totalPaid.toLocaleString('en-IN')}</td>
                       <td className="p-4 text-right font-black text-rose-600">{f.balance.toLocaleString('en-IN')}</td>
@@ -328,7 +390,7 @@ const Reports: React.FC = () => {
                 </tbody>
                 <tfoot className="bg-slate-900 text-white font-black">
                    <tr>
-                     <td colSpan={4} className="p-6 text-xl uppercase text-right">Total Outstanding Ledger</td>
+                     <td colSpan={3} className="p-6 text-xl uppercase text-right">Total Period Dues</td>
                      <td className="p-6 text-xl text-right">₹{studentFinancials.reduce((s, f) => s + f.balance, 0).toLocaleString('en-IN')}</td>
                    </tr>
                 </tfoot>
@@ -342,7 +404,7 @@ const Reports: React.FC = () => {
                <p className="text-[10px] font-black uppercase tracking-widest">Auditor Signature</p>
             </div>
             <div className="text-right">
-               <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">EduPay Cloud Platform - v2.5.8</p>
+               <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">EduPay PRO Platform</p>
                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 mt-1">Generated by {state.user?.name}</p>
             </div>
          </div>
